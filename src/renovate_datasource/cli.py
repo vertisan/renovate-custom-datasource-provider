@@ -75,11 +75,10 @@ def all_providers(ctx: click.Context) -> None:
             logger_main.info(f"Processing provider: {provider_name}")
 
             # Get the provider's config class from annotations
-            config_annotation = provider_class.__annotations__.get("config")
-            if config_annotation is None:
+            config_class = provider_class.__annotations__.get("config")
+            if config_class is None:
                 logger_main.error(f"Provider {provider_name} has no config annotation")
                 continue
-            config_class = config_annotation.__args__[0]
             config = config_class(output_dir=output_dir)
             provider_instance = provider_class(config)
 
@@ -129,6 +128,17 @@ def list_providers(ctx: click.Context) -> None:
 def provider() -> None:
     """Run specific provider commands."""
     pass
+
+
+# Register provider-specific CLI commands after the provider group is created
+def _register_provider_commands() -> None:
+    """Register all provider-specific CLI commands."""
+    from renovate_datasource.providers.redhat_docker import register_cli_command
+
+    register_cli_command()
+
+
+_register_provider_commands()
 
 
 if __name__ == "__main__":

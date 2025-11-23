@@ -52,39 +52,6 @@ class TestRedHatDockerProvider:
         """Test provider name."""
         assert provider.name == "redhat-docker"
 
-    def test_fetch_repository_data_success(
-        self, provider: RedHatDockerProvider, mocker: Any
-    ) -> None:
-        """Test successful repository data fetch."""
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "_id": "test-repo-id",
-            "name": "ubi9/ubi-minimal",
-        }
-        mock_response.raise_for_status = Mock()
-
-        mocker.patch.object(provider.client, "get", return_value=mock_response)
-
-        result = provider._fetch_repository_data("ubi9/ubi-minimal")
-
-        assert result is not None
-        assert result["_id"] == "test-repo-id"
-        assert result["name"] == "ubi9/ubi-minimal"
-
-    def test_fetch_repository_data_not_found(
-        self, provider: RedHatDockerProvider, mocker: Any
-    ) -> None:
-        """Test repository data fetch when repository not found."""
-        mock_response = Mock()
-        mock_response.status_code = 404
-        error = httpx.HTTPStatusError("Not found", request=Mock(), response=mock_response)
-        mock_response.raise_for_status.side_effect = error
-
-        mocker.patch.object(provider.client, "get", return_value=mock_response)
-
-        result = provider._fetch_repository_data("nonexistent")
-        assert result is None
-
     def test_fetch_image_tags_single_page(
         self, provider: RedHatDockerProvider, mocker: Any
     ) -> None:
@@ -107,7 +74,7 @@ class TestRedHatDockerProvider:
 
         mocker.patch.object(provider.client, "get", return_value=mock_response)
 
-        result = provider._fetch_image_tags("test-repo-id")
+        result = provider._fetch_image_tags("ubi9/ubi-minimal")
 
         assert len(result) == 2
         assert result[0]["repositories"][0]["tags"][0]["name"] == "latest"
@@ -137,63 +104,66 @@ class TestRedHatDockerProvider:
 
         mocker.patch.object(provider.client, "get", side_effect=mock_responses)
 
-        result = provider._fetch_image_tags("test-repo-id")
+        result = provider._fetch_image_tags("ubi9/ubi-minimal")
 
         assert len(result) == 2
 
     def test_parse_version_info_success(self, provider: RedHatDockerProvider) -> None:
-        """Test parsing version info from tag data."""
-        tag_data = {
-            "repositories": [{"tags": [{"name": "9.0"}]}],
+        """Test parsing version info from image data."""
+        image_data = {
+            "repositories": [
+                {
+                    "tags": [{"name": "9.0"}, {"name": "latest"}],
+                    "manifest_schema2_digest": "abc123",
+                }
+            ],
             "parsed_data": {"created": "2024-01-01T00:00:00Z"},
-            "manifest_schema2_digest": "abc123",
         }
 
-        result = provider._parse_version_info(tag_data)
+        result = provider._parse_version_info(image_data)
 
-        assert result is not None
-        assert result.version == "9.0"
-        assert result.release_timestamp == "2024-01-01T00:00:00+00:00"
-        assert result.digest == "sha256:abc123"
+        assert len(result) == 2
+        assert result[0].version == "9.0"
+        assert result[0].release_timestamp == "2024-01-01T00:00:00+00:00"
+        assert result[0].digest == "sha256:abc123"
+        assert result[1].version == "latest"
 
     def test_parse_version_info_no_tags(self, provider: RedHatDockerProvider) -> None:
         """Test parsing version info with no tags."""
-        tag_data = {"repositories": [{"tags": []}]}
+        image_data = {"repositories": [{"tags": []}]}
 
-        result = provider._parse_version_info(tag_data)
-        assert result is None
+        result = provider._parse_version_info(image_data)
+        assert len(result) == 0
 
     def test_parse_version_info_invalid_timestamp(self, provider: RedHatDockerProvider) -> None:
         """Test parsing version info with invalid timestamp."""
-        tag_data = {
+        image_data = {
             "repositories": [{"tags": [{"name": "9.0"}]}],
             "parsed_data": {"created": "invalid"},
         }
 
-        result = provider._parse_version_info(tag_data)
+        result = provider._parse_version_info(image_data)
 
-        assert result is not None
-        assert result.version == "9.0"
-        assert result.release_timestamp is None
+        assert len(result) == 1
+        assert result[0].version == "9.0"
+        assert result[0].release_timestamp is None
 
     def test_fetch_versions_default_repositories(
         self, provider: RedHatDockerProvider, mocker: Any
     ) -> None:
         """Test fetch_versions with default repositories."""
-        # Mock repository data
-        mocker.patch.object(
-            provider,
-            "_fetch_repository_data",
-            return_value={"_id": "test-id", "name": "ubi9"},
-        )
-
-        # Mock tags
+        # Mock images
         mocker.patch.object(
             provider,
             "_fetch_image_tags",
             return_value=[
                 {
-                    "repositories": [{"tags": [{"name": "latest"}]}],
+                    "repositories": [
+                        {
+                            "tags": [{"name": "latest"}],
+                            "manifest_schema2_digest": "abc123",
+                        }
+                    ],
                     "parsed_data": {"created": "2024-01-01T00:00:00Z"},
                 }
             ],
@@ -208,20 +178,18 @@ class TestRedHatDockerProvider:
         self, provider: RedHatDockerProvider, mocker: Any
     ) -> None:
         """Test fetch_versions with custom repositories."""
-        # Mock repository data
-        mocker.patch.object(
-            provider,
-            "_fetch_repository_data",
-            return_value={"_id": "test-id", "name": "custom-repo"},
-        )
-
-        # Mock tags
+        # Mock images
         mocker.patch.object(
             provider,
             "_fetch_image_tags",
             return_value=[
                 {
-                    "repositories": [{"tags": [{"name": "1.0.0"}]}],
+                    "repositories": [
+                        {
+                            "tags": [{"name": "1.0.0"}],
+                            "manifest_schema2_digest": "xyz789",
+                        }
+                    ],
                     "parsed_data": {"created": "2024-01-01T00:00:00Z"},
                 }
             ],
@@ -236,17 +204,23 @@ class TestRedHatDockerProvider:
         self, provider: RedHatDockerProvider, mocker: Any
     ) -> None:
         """Test fetch_versions when repository is not found."""
-        mocker.patch.object(provider, "_fetch_repository_data", return_value=None)
+        mock_response = Mock()
+        mock_response.status_code = 404
+        error = httpx.HTTPStatusError("Not found", request=Mock(), response=mock_response)
+        mock_response.raise_for_status.side_effect = error
+        mocker.patch.object(provider.client, "get", return_value=mock_response)
 
+        # Should not raise, just skip the repository
         results = provider.fetch_versions(repositories=["nonexistent"])
-
         assert len(results) == 0
 
     def test_fetch_versions_error_handling(
         self, provider: RedHatDockerProvider, mocker: Any
     ) -> None:
         """Test fetch_versions error handling."""
-        mocker.patch.object(provider, "_fetch_repository_data", side_effect=Exception("Test error"))
+        mocker.patch.object(
+            provider, "_fetch_image_tags", side_effect=Exception("Test error")
+        )
 
         # Should not raise, just skip the repository
         results = provider.fetch_versions(repositories=["error-repo"])
@@ -256,20 +230,18 @@ class TestRedHatDockerProvider:
         self, provider: RedHatDockerProvider, mocker: Any, tmp_path: Path
     ) -> None:
         """Test generate_output creates JSON files."""
-        # Mock repository data
-        mocker.patch.object(
-            provider,
-            "_fetch_repository_data",
-            return_value={"_id": "test-id", "name": "test-repo"},
-        )
-
-        # Mock tags
+        # Mock images
         mocker.patch.object(
             provider,
             "_fetch_image_tags",
             return_value=[
                 {
-                    "repositories": [{"tags": [{"name": "1.0.0"}]}],
+                    "repositories": [
+                        {
+                            "tags": [{"name": "1.0.0"}],
+                            "manifest_schema2_digest": "def456",
+                        }
+                    ],
                     "parsed_data": {"created": "2024-01-01T00:00:00Z"},
                 }
             ],

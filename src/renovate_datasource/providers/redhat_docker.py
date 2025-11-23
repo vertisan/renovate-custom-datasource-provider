@@ -1,13 +1,13 @@
 """Red Hat Docker provider for UBI images."""
 
 from datetime import datetime
+import sys
 from typing import Any
 
 import click
 import httpx
 from pydantic import Field
 
-from renovate_datasource.cli import provider
 from renovate_datasource.core.base import (
     BaseProvider,
     DatasourceOutput,
@@ -47,106 +47,76 @@ class RedHatDockerProvider(BaseProvider):
         """Return the provider name."""
         return "redhat-docker"
 
-    def _fetch_repository_data(self, repository: str) -> dict[str, Any] | None:
+    def _fetch_image_tags(self, repository: str) -> list[dict[str, Any]]:
         """
-        Fetch repository data from Red Hat Container Catalog.
+        Fetch image tags for a repository.
 
         Args:
             repository: Repository name (e.g., 'ubi9/ubi-minimal')
 
         Returns:
-            Repository data or None if not found
+            List of image data
         """
         try:
-            # Search for the repository
-            search_url = (
+            images_url = (
                 f"{self.config.registry_url}/repositories/registry/"
-                f"registry.access.redhat.com/repository/{repository}"
+                f"registry.access.redhat.com/repository/{repository}/images"
             )
-            self.logger.debug(f"Fetching repository data from: {search_url}")
+            self.logger.debug(f"Fetching images from: {images_url}")
 
-            response = self.client.get(search_url)
-            response.raise_for_status()
-
-            data: dict[str, Any] = response.json()
-            return data
-
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                self.logger.warning(f"Repository not found: {repository}")
-                return None
-            self.logger.error(f"HTTP error fetching repository {repository}: {e}")
-            raise
-        except Exception as e:
-            self.logger.error(f"Error fetching repository {repository}: {e}")
-            raise
-
-    def _fetch_image_tags(self, repository_id: str) -> list[dict[str, Any]]:
-        """
-        Fetch image tags for a repository.
-
-        Args:
-            repository_id: Repository ID from the catalog
-
-        Returns:
-            List of tag data
-        """
-        try:
-            tags_url = f"{self.config.registry_url}/repositories/id/{repository_id}/images"
-            self.logger.debug(f"Fetching tags from: {tags_url}")
-
-            all_tags = []
+            all_images = []
             page = 0
             page_size = 100
 
             while True:
-                response = self.client.get(tags_url, params={"page_size": page_size, "page": page})
+                response = self.client.get(
+                    images_url, params={"page_size": page_size, "page": page}
+                )
                 response.raise_for_status()
 
                 data = response.json()
-                tags = data.get("data", [])
+                images = data.get("data", [])
 
-                if not tags:
+                if not images:
                     break
 
-                all_tags.extend(tags)
+                all_images.extend(images)
 
                 # Check if there are more pages
                 total = data.get("total", 0)
-                if len(all_tags) >= total:
+                if len(all_images) >= total:
                     break
 
                 page += 1
 
-            self.logger.info(f"Found {len(all_tags)} tags for repository {repository_id}")
-            return all_tags
+            self.logger.info(f"Found {len(all_images)} images for repository {repository}")
+            return all_images
 
         except Exception as e:
-            self.logger.error(f"Error fetching tags for repository {repository_id}: {e}")
+            self.logger.error(f"Error fetching images for repository {repository}: {e}")
             raise
 
-    def _parse_version_info(self, tag_data: dict[str, Any]) -> VersionInfo | None:
+    def _parse_version_info(self, image_data: dict[str, Any]) -> list[VersionInfo]:
         """
-        Parse version information from tag data.
+        Parse version information from image data.
 
         Args:
-            tag_data: Tag data from API
+            image_data: Image data from API
 
         Returns:
-            VersionInfo or None if tag should be skipped
+            List of VersionInfo objects (one per tag)
         """
+        versions: list[VersionInfo] = []
         try:
-            # Get the first tag name (images can have multiple tags)
-            tags = tag_data.get("repositories", [{}])[0].get("tags", [])
+            # Get repository info
+            repo_info = image_data.get("repositories", [{}])[0]
+            tags = repo_info.get("tags", [])
+
             if not tags:
-                return None
+                return versions
 
-            version = tags[0].get("name")
-            if not version:
-                return None
-
-            # Parse timestamp
-            parsed_date = tag_data.get("parsed_data", {}).get("created")
+            # Parse timestamp from image creation date
+            parsed_date = image_data.get("parsed_data", {}).get("created")
             release_timestamp = None
             if parsed_date:
                 try:
@@ -157,19 +127,30 @@ class RedHatDockerProvider(BaseProvider):
 
             # Get digest
             digest = None
-            manifest_schema2_digest = tag_data.get("manifest_schema2_digest")
+            manifest_schema2_digest = repo_info.get("manifest_schema2_digest")
             if manifest_schema2_digest:
-                digest = f"sha256:{manifest_schema2_digest}"
+                digest = manifest_schema2_digest
+                if not digest.startswith("sha256:"):
+                    digest = f"sha256:{digest}"
 
-            return VersionInfo(
-                version=version,
-                release_timestamp=release_timestamp,
-                digest=digest,
-            )
+            # Create a VersionInfo for each tag
+            for tag in tags:
+                tag_name = tag.get("name")
+                if not tag_name:
+                    continue
+
+                versions.append(
+                    VersionInfo(
+                        version=tag_name,
+                        release_timestamp=release_timestamp,
+                        digest=digest,
+                    )
+                )
 
         except Exception as e:
-            self.logger.warning(f"Error parsing tag data: {e}")
-            return None
+            self.logger.warning(f"Error parsing image data: {e}")
+
+        return versions
 
     def fetch_versions(self, **kwargs: Any) -> list[DatasourceOutput]:
         """
@@ -185,7 +166,8 @@ class RedHatDockerProvider(BaseProvider):
         """
         repositories: list[str] | None = kwargs.get("repositories")
         if not repositories:
-            repositories = ["ubi9/ubi-minimal", "ubi8", "ubi9"]
+            self.logger.warning("No repositories has been provided!")
+            sys.exit(0)
 
         outputs = []
 
@@ -193,26 +175,14 @@ class RedHatDockerProvider(BaseProvider):
             try:
                 self.logger.info(f"Processing repository: {repo}")
 
-                # Fetch repository data
-                repo_data = self._fetch_repository_data(repo)
-                if not repo_data:
-                    self.logger.warning(f"Skipping repository {repo}: not found")
-                    continue
+                # Fetch images
+                images = self._fetch_image_tags(repo)
 
-                repository_id = repo_data.get("_id")
-                if not repository_id:
-                    self.logger.warning(f"Skipping repository {repo}: no ID found")
-                    continue
-
-                # Fetch tags
-                tags = self._fetch_image_tags(repository_id)
-
-                # Parse versions
+                # Parse versions from images
                 versions = []
-                for tag_data in tags:
-                    version_info = self._parse_version_info(tag_data)
-                    if version_info:
-                        versions.append(version_info)
+                for image_data in images:
+                    version_infos = self._parse_version_info(image_data)
+                    versions.extend(version_infos)
 
                 # Sort versions by release timestamp (newest first)
                 versions.sort(key=lambda v: v.release_timestamp or "", reverse=True)
@@ -243,37 +213,40 @@ class RedHatDockerProvider(BaseProvider):
 registry.register(RedHatDockerProvider)
 
 
-# Add CLI command for this provider
-@provider.command("redhat-docker")
-@click.option(
-    "-r",
-    "--repository",
-    "repositories",
-    multiple=True,
-    help="Repository to fetch (can be specified multiple times). "
-    "Examples: ubi9/ubi-minimal, ubi8, ubi9",
-)
-@click.option(
-    "-o",
-    "--output-dir",
-    type=click.Path(exists=False, path_type=str),
-    help="Output directory for JSON files (overrides global option)",
-)
-@click.pass_context
-def redhat_docker_command(
-    ctx: click.Context,
-    repositories: tuple[str, ...],
-    output_dir: str | None,
-) -> None:
-    """Fetch versions for Red Hat Docker images (UBI)."""
-    from pathlib import Path
+def register_cli_command() -> None:
+    """Register the CLI command for this provider."""
+    from renovate_datasource.cli import provider
 
-    output_path = Path(output_dir) if output_dir else Path(ctx.obj["output_dir"])
+    @provider.command("redhat-docker")
+    @click.option(
+        "-r",
+        "--repository",
+        "repositories",
+        multiple=True,
+        help="Repository to fetch (can be specified multiple times). "
+        "Examples: ubi9/ubi-minimal, ubi8, ubi9",
+    )
+    @click.option(
+        "-o",
+        "--output-dir",
+        type=click.Path(exists=False, path_type=str),
+        help="Output directory for JSON files (overrides global option)",
+    )
+    @click.pass_context
+    def redhat_docker_command(
+        ctx: click.Context,
+        repositories: tuple[str, ...],
+        output_dir: str | None,
+    ) -> None:
+        """Fetch versions for Red Hat Docker images (UBI)."""
+        from pathlib import Path
 
-    config = RedHatDockerConfig(output_dir=output_path)
-    provider_instance = RedHatDockerProvider(config)
+        output_path = Path(output_dir) if output_dir else Path(ctx.obj["output_dir"])
 
-    # Convert tuple to list, use default if empty
-    repo_list = list(repositories) if repositories else None
+        config = RedHatDockerConfig(output_dir=output_path)
+        provider_instance = RedHatDockerProvider(config)
 
-    provider_instance.generate_output(repositories=repo_list)
+        # Convert tuple to list, use default if empty
+        repo_list = list(repositories) if repositories else None
+
+        provider_instance.generate_output(repositories=repo_list)
