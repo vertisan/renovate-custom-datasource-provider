@@ -1,0 +1,119 @@
+[tool.poetry]
+name = "renovate-custom-datasource-provider"
+version = "0.0.0"
+description = "CLI tool for generating custom datasource JSON files for Renovate"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "renovate_datasource", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+click = "^8.1.7"
+pydantic = "^2.9.2"
+loguru = "^0.7.2"
+httpx = "^0.27.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3.3"
+pytest-cov = "^5.0.0"
+pytest-mock = "^3.14.0"
+ruff = "^0.7.4"
+mypy = "^1.13.0"
+black = "^24.10.0"
+
+[tool.poetry.scripts]
+renovate-datasource = "renovate_datasource.cli:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = "-v --cov=src/renovate_datasource --cov-report=term-missing --cov-report=xml"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "dist",
+    "build",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = []
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+strict_equality = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:tool.poetry.version"]
+version_variables = ["src/renovate_datasource/__init__.py:__version__"]
+branch = "master"
+upload_to_pypi = false
+upload_to_release = true
+build_command = "pip install poetry && poetry build"
+
+[tool.semantic_release.branches.master]
+match = "master"
+prerelease = false
+
+[tool.semantic_release.branches.next]
+match = "next"
+prerelease = true
+prerelease_token = "rc"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
