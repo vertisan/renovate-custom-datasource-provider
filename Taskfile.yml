@@ -1,0 +1,93 @@
+version: '3'
+
+vars:
+  PYTHON: python3
+  POETRY: poetry
+
+tasks:
+  install:
+    desc: Install dependencies
+    cmds:
+      - "{{.POETRY}} install"
+
+  test:
+    desc: Run tests with coverage
+    cmds:
+      - "{{.POETRY}} run pytest"
+
+  test:watch:
+    desc: Run tests in watch mode
+    cmds:
+      - "{{.POETRY}} run pytest-watch"
+
+  lint:
+    desc: Run all linters
+    deps:
+      - lint:ruff
+      - lint:black
+      - lint:mypy
+
+  lint:ruff:
+    desc: Run ruff linter
+    cmds:
+      - "{{.POETRY}} run ruff check src tests"
+
+  lint:black:
+    desc: Check code formatting with black
+    cmds:
+      - "{{.POETRY}} run black --check src tests"
+
+  lint:mypy:
+    desc: Run mypy type checker
+    cmds:
+      - "{{.POETRY}} run mypy src"
+
+  format:
+    desc: Format code with black and ruff
+    cmds:
+      - "{{.POETRY}} run black src tests"
+      - "{{.POETRY}} run ruff check --fix src tests"
+
+  format:check:
+    desc: Check code formatting
+    cmds:
+      - "{{.POETRY}} run black --check src tests"
+
+  build:
+    desc: Build the package
+    cmds:
+      - "{{.POETRY}} build"
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf dist build *.egg-info
+      - rm -rf .pytest_cache .coverage .mypy_cache .ruff_cache
+      - find . -type d -name __pycache__ -exec rm -rf {} +
+      - find . -type f -name "*.pyc" -delete
+
+  run:
+    desc: Run the CLI
+    cmds:
+      - "{{.POETRY}} run renovate-datasource {{.CLI_ARGS}}"
+
+  run:all:
+    desc: Run all providers
+    cmds:
+      - "{{.POETRY}} run renovate-datasource all-providers"
+
+  run:redhat:
+    desc: Run Red Hat Docker provider
+    cmds:
+      - "{{.POETRY}} run renovate-datasource provider redhat-docker {{.CLI_ARGS}}"
+
+  ci:
+    desc: Run CI checks (lint + test)
+    cmds:
+      - task: lint
+      - task: test
+
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
