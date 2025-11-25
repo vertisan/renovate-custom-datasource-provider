@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:*)",
+      "Bash(poetry:*)",
+      "WebFetch(domain:catalog.redhat.com)",
+      "WebFetch(domain:registry.access.redhat.com)",
+      "Bash(podman build:*)",
+      "Bash(podman run:*)"
+    ]
+  },
   "statusLine": {
     "type": "command",
     "command": "python3 .claude/scripts/context-monitor.py"

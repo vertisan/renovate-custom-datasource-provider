@@ -1,0 +1,64 @@
+[tool.poetry]
+name = "renovate-datasource-provider"
+version = "0.1.0"
+description = "A flexible version source provider for Renovate with support for custom datasources"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "renovate_datasource", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.12"
+click = "^8.1.7"
+pydantic = "^2.5.0"
+requests = "^2.31.0"
+pyyaml = "^6.0.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-cov = "^4.1.0"
+pytest-mock = "^3.12.0"
+black = "^23.12.0"
+ruff = "^0.1.8"
+mypy = "^1.7.1"
+types-requests = "^2.31.0"
+types-pyyaml = "^6.0.12"
+
+[tool.poetry.scripts]
+renovate-datasource = "renovate_datasource.main:cli"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+
+[tool.ruff]
+line-length = 100
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = []
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=src/renovate_datasource --cov-report=term-missing"
+markers = [
+    "integration: marks tests as integration tests that hit real external services (deselect with '-m \"not integration\"')",
+]
